@@ -1,24 +1,19 @@
 """Front tire dynamics model.
 
 This module contains functions for calculating the front tire dynamics based on
-the model described in 'Dynamics And Control Of Drifting In Automobiles' 
+the model described in 'Dynamics And Control Of Drifting In Automobiles'
 (Hindiyeh, 2013).
 """
 
-from typing import Callable
-
 import jax
+import jax.lax as lax
 import jax.numpy as jnp
 from jax import jit
-import jax.lax as lax
 
 
 @jit
 def front_tire_dynamics(
-    alpha: jax.Array, 
-    mu: jax.Array, 
-    load_f: jax.Array, 
-    C_alpha: jax.Array
+    alpha: jax.Array, mu: jax.Array, load_f: jax.Array, C_alpha: jax.Array
 ) -> jax.Array:
     """Calculate the lateral force Fy for the front tire given the slip angle alpha.
 
@@ -40,7 +35,7 @@ def front_tire_dynamics(
     )
 
     alpha_sl = jnp.arctan(3 * mu * load_f / C_alpha)
-    
+
     # Calculate Fy based on slip angle magnitude
     def calc_linear_region(a: jax.Array) -> jax.Array:
         """Calculate lateral force in the linear (non-saturated) region."""
@@ -49,11 +44,11 @@ def front_tire_dynamics(
             + C_alpha**2 / (3 * mu * load_f) * jnp.abs(jnp.tan(a)) * jnp.tan(a)
             - C_alpha**3 / (27 * mu**2 * load_f**2) * jnp.tan(a) ** 3
         )
-    
+
     def calc_saturation_region(a: jax.Array) -> jax.Array:
         """Calculate lateral force in the saturation region."""
         return -mu * load_f * jnp.sign(a)
-    
+
     Fy = lax.cond(
         jnp.abs(alpha) <= alpha_sl,
         calc_linear_region,
