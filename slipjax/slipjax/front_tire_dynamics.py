@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 from jax import jit
+import jax.lax as lax
 
 
 @jit
@@ -16,17 +17,32 @@ def front_tire_dynamics(alpha, mu, load_f, C_alpha):
     Returns:
     float: Lateral force Fy.
     """
-    if jnp.abs(alpha) > jnp.pi / 2:
-        alpha = (jnp.pi - jnp.abs(alpha)) * jnp.sign(alpha)
+    # Handle extreme slip angles (> pi/2)
+    alpha = lax.cond(
+        jnp.abs(alpha) > jnp.pi / 2,
+        lambda a: (jnp.pi - jnp.abs(a)) * jnp.sign(a),
+        lambda a: a,
+        alpha
+    )
 
     alpha_sl = jnp.arctan(3 * mu * load_f / C_alpha)
-    if jnp.abs(alpha) <= alpha_sl:
-        Fy = (
-            -C_alpha * jnp.tan(alpha)
-            + C_alpha**2 / (3 * mu * load_f) * jnp.abs(jnp.tan(alpha)) * jnp.tan(alpha)
-            - C_alpha**3 / (27 * mu**2 * load_f**2) * jnp.tan(alpha) ** 3
+    
+    # Calculate Fy based on slip angle magnitude
+    def calc_linear_region(a):
+        return (
+            -C_alpha * jnp.tan(a)
+            + C_alpha**2 / (3 * mu * load_f) * jnp.abs(jnp.tan(a)) * jnp.tan(a)
+            - C_alpha**3 / (27 * mu**2 * load_f**2) * jnp.tan(a) ** 3
         )
-    else:
-        Fy = -mu * load_f * jnp.sign(alpha)
+    
+    def calc_saturation_region(a):
+        return -mu * load_f * jnp.sign(a)
+    
+    Fy = lax.cond(
+        jnp.abs(alpha) <= alpha_sl,
+        calc_linear_region,
+        calc_saturation_region,
+        alpha
+    )
 
     return Fy
