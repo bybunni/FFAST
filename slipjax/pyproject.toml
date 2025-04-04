@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "slipjax"
+version = "0.1.0"
+description = "A JAX-based vehicle dynamics simulation package."
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+license = { text = "MIT" }
+readme = "README.md"
+dependencies = [
+    "jax"
+]
+
+[project.urls]
+"Homepage" = "https://example.com"
