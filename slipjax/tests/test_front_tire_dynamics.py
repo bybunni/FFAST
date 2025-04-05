@@ -2,6 +2,7 @@
 from typing import Any
 
 import jax.numpy as jnp
+from jax import vmap
 import pytest
 
 from slipjax.front_tire_dynamics import calculate_front_tire_lateral_force
@@ -43,6 +44,47 @@ def test_front_tire_dynamics_sanity() -> None:
     # Should be opposite sign of Fy_small
     assert jnp.isclose(Fy_neg, -Fy_small, rtol=0.1), \
         f"Expected Fy≈{-Fy_small} with negative slip angle, got {Fy_neg}"
+
+
+def test_front_tire_dynamics_batch_processing() -> None:
+    """Test the batch processing capability for massively parallel simulation."""
+    # Define a batch of slip angles from -π/2 to π/2
+    batch_size = 1000
+    slip_angles = jnp.linspace(-jnp.pi/2 + 0.01, jnp.pi/2 - 0.01, batch_size)
+    
+    # Constant parameters for all batch elements
+    friction_coefficient = 1.0
+    front_load = 1000.0
+    cornering_stiffness = 1000.0
+    
+    # Create a vectorized version of the function that operates on the first argument (slip angle)
+    vectorized_tire_model = vmap(calculate_front_tire_lateral_force, in_axes=(0, None, None, None))
+    
+    # Process all slip angles in a single operation
+    batch_forces = vectorized_tire_model(
+        slip_angles, 
+        friction_coefficient, 
+        front_load, 
+        cornering_stiffness
+    )
+    
+    # Verify batch shape matches input shape
+    assert batch_forces.shape == slip_angles.shape, f"Expected shape {slip_angles.shape}, got {batch_forces.shape}"
+    
+    # Verify that forces at positive and negative angles have the expected symmetry
+    midpoint = batch_size // 2
+    positive_angles = slip_angles[midpoint:]
+    negative_angles = slip_angles[:midpoint]
+    positive_forces = batch_forces[midpoint:]
+    negative_forces = batch_forces[:midpoint]
+    
+    # Forces should be antisymmetric: F(-α) = -F(α)
+    for i in range(len(negative_angles)):
+        neg_idx = midpoint - i - 1  # Index from the end of negative angles
+        pos_idx = midpoint + i      # Matching positive angle index
+        if pos_idx < len(positive_angles):
+            assert jnp.isclose(negative_forces[neg_idx], -positive_forces[i], rtol=1e-5), \
+                f"Force symmetry violated at angles {negative_angles[neg_idx]} and {positive_angles[i]}"
 
 
 def test_front_tire_dynamics_extreme_angles() -> None:

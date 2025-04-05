@@ -16,10 +16,13 @@ from jax import jit
 
 @jit
 def calculate_front_tire_lateral_force(
-    slip_angle: jax.Array, friction_coefficient: jax.Array, front_load: jax.Array, cornering_stiffness: jax.Array
+    slip_angle: jax.Array,
+    friction_coefficient: jax.Array,
+    front_load: jax.Array,
+    cornering_stiffness: jax.Array,
 ) -> jax.Array:
     """Calculate the lateral force for the front tire given the slip angle.
-    
+
     This is a JAX implementation of the MATLAB tire_dyn_f.m function from the original model.
 
     Args:
@@ -45,25 +48,32 @@ def calculate_front_tire_lateral_force(
     )
 
     # Calculate the sliding limit angle (transition between regimes)
-    sliding_limit_angle = jnp.arctan(3 * friction_coefficient * front_load / cornering_stiffness)
+    sliding_limit_angle = jnp.arctan(
+        3 * friction_coefficient * front_load / cornering_stiffness
+    )
 
     # Calculate lateral force based on slip angle magnitude
-    def calc_linear_region(angle: jax.Array) -> jax.Array:
+    def calculate_linear_region_force(angle: jax.Array) -> jax.Array:
         """Calculate lateral force in the linear (non-saturated) region."""
         return (
             -cornering_stiffness * jnp.tan(angle)
-            + cornering_stiffness**2 / (3 * friction_coefficient * front_load) * jnp.abs(jnp.tan(angle)) * jnp.tan(angle)
-            - cornering_stiffness**3 / (27 * friction_coefficient**2 * front_load**2) * jnp.tan(angle) ** 3
+            + cornering_stiffness**2
+            / (3 * friction_coefficient * front_load)
+            * jnp.abs(jnp.tan(angle))
+            * jnp.tan(angle)
+            - cornering_stiffness**3
+            / (27 * friction_coefficient**2 * front_load**2)
+            * jnp.tan(angle) ** 3
         )
 
-    def calc_saturation_region(angle: jax.Array) -> jax.Array:
+    def calculate_saturation_region_force(angle: jax.Array) -> jax.Array:
         """Calculate lateral force in the saturation region."""
         return -friction_coefficient * front_load * jnp.sign(angle)
 
     lateral_force = lax.cond(
         jnp.abs(adjusted_slip_angle) <= sliding_limit_angle,
-        calc_linear_region,
-        calc_saturation_region,
+        calculate_linear_region_force,
+        calculate_saturation_region_force,
         adjusted_slip_angle,
     )
 
