@@ -113,8 +113,8 @@ def test_cornering_dynamics(default_vehicle_params: VehicleParameters) -> None:
     )
     
     # Expectations during right turn:
-    # 1. Positive yaw rate (turning right/clockwise)
-    assert state_derivatives[2] > 0, "Yaw rate should be positive for right turn"
+    # 1. Positive yaw acceleration (turning right/clockwise)
+    assert state_derivatives[5] > 0, "Yaw acceleration should be positive for right turn"
     
     # 2. Should develop lateral velocity (negative vy for right turn in body frame)
     assert state_derivatives[4] < 0, "Lateral acceleration should be negative for right turn"
@@ -127,8 +127,8 @@ def test_cornering_dynamics(default_vehicle_params: VehicleParameters) -> None:
         default_vehicle_params
     )
     
-    # Turning left should have opposite signs for yaw rate and lateral acceleration
-    assert state_derivatives_left[2] < 0, "Yaw rate should be negative for left turn"
+    # Turning left should have opposite signs for yaw acceleration and lateral acceleration
+    assert state_derivatives_left[5] < 0, "Yaw acceleration should be negative for left turn"
     assert state_derivatives_left[4] > 0, "Lateral acceleration should be positive for left turn"
 
 
@@ -235,10 +235,12 @@ def test_batch_processing(default_vehicle_params: VehicleParameters) -> None:
         f"Expected 6 derivatives per state, got {batch_derivatives.shape[1]}"
     
     # Verify monotonicity in certain outputs based on increasing velocity
-    # e.g., higher speeds should generally result in higher yaw rates for a fixed steering angle
-    yaw_rates = batch_derivatives[:, 2]  # Extract all yaw rates
+    # e.g., higher speeds should generally result in higher yaw accelerations for a fixed steering angle
+    yaw_accelerations = batch_derivatives[:, 5]  # Extract all yaw accelerations
     
-    # Check if yaw rates generally increase with velocity (allowing for some non-monotonicity)
-    # We just check that the highest velocities produce higher yaw rates than lowest velocities
-    assert jnp.mean(yaw_rates[-10:]) > jnp.mean(yaw_rates[:10]), \
-        "Expected higher yaw rates at higher velocities"
+    # Check if yaw accelerations generally increase with velocity (allowing for some non-monotonicity)
+    # We just check that the highest velocities produce higher yaw accelerations than lowest velocities
+    assert jnp.mean(yaw_accelerations[-10:]) > jnp.mean(yaw_accelerations[:10]), \
+        "Expected higher yaw accelerations at higher velocities"
+
+    # Spot check a mid-range derivative calculation
