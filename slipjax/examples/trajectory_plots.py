@@ -90,23 +90,24 @@ all_trajectories = batch_simulator(base_state, steering_angles)
 # Create directory for saving the plot if it doesn't exist
 os.makedirs('examples', exist_ok=True)
 
-# Function to draw the vehicle as three rectangles
+# Function to draw the vehicle as a body with 4 wheels
 def draw_vehicle(ax, x, y, yaw, steering_angle, vehicle_params, color='blue'):
-    """Draw the vehicle as three rectangles: main body, front tire, and rear tire.
+    """Draw the vehicle as a body rectangle with 4 wheels at each corner.
     
     Args:
         ax: Matplotlib axis to draw on
         x, y: Position of the vehicle center in global coordinates
         yaw: Yaw angle of the vehicle
-        steering_angle: Steering angle of the front tire
+        steering_angle: Steering angle of the front wheels
         vehicle_params: Vehicle parameters including dimensions
         color: Color of the vehicle outline
     """
     # Vehicle dimensions
-    body_length = vehicle_params.front_axle_distance + vehicle_params.rear_axle_distance + 0.5  # Add buffer
-    body_width = 1.8  # Typical car width
-    tire_length = 0.7  # Tire length
-    tire_width = 0.3   # Tire width
+    body_length = vehicle_params.front_axle_distance + vehicle_params.rear_axle_distance  # No buffer
+    body_width = 1.4  # Narrower car width
+    wheel_length = 1.25  # Larger wheel length
+    wheel_width = 0.6  # Larger wheel width
+    track_width = 1.4  # Slightly wider track for wheel positioning
     
     # Calculate coordinates for the vehicle body rectangle in local frame
     body_points = np.array([
@@ -117,17 +118,14 @@ def draw_vehicle(ax, x, y, yaw, steering_angle, vehicle_params, color='blue'):
         [-vehicle_params.rear_axle_distance, -body_width/2]   # back to first point to close the shape
     ])
     
-    # Calculate coordinates for the front tire in local frame
-    front_tire_points = np.array([
-        [-tire_length/2, -tire_width/2],
-        [-tire_length/2, tire_width/2],
-        [tire_length/2, tire_width/2],
-        [tire_length/2, -tire_width/2],
-        [-tire_length/2, -tire_width/2]
+    # Calculate coordinates for a single wheel in local frame
+    wheel_points = np.array([
+        [-wheel_length/2, -wheel_width/2],
+        [-wheel_length/2, wheel_width/2],
+        [wheel_length/2, wheel_width/2],
+        [wheel_length/2, -wheel_width/2],
+        [-wheel_length/2, -wheel_width/2]
     ])
-    
-    # Calculate coordinates for the rear tire in local frame (same dimensions as front)
-    rear_tire_points = front_tire_points.copy()
     
     # Transformation matrix for the vehicle body
     cos_yaw = np.cos(yaw)
@@ -142,43 +140,47 @@ def draw_vehicle(ax, x, y, yaw, steering_angle, vehicle_params, color='blue'):
         # Translate
         transformed_body_points[i] = [x + rotated_x, y + rotated_y]
     
-    # Position of front and rear axles in global coordinates
-    front_axle_x = x + vehicle_params.front_axle_distance * cos_yaw
-    front_axle_y = y + vehicle_params.front_axle_distance * sin_yaw
-    rear_axle_x = x - vehicle_params.rear_axle_distance * cos_yaw
-    rear_axle_y = y - vehicle_params.rear_axle_distance * sin_yaw
+    # Calculate wheel positions in local vehicle coordinates
+    wheel_positions = [
+        # Front left wheel
+        [vehicle_params.front_axle_distance, -track_width/2],
+        # Front right wheel
+        [vehicle_params.front_axle_distance, track_width/2],
+        # Rear left wheel
+        [-vehicle_params.rear_axle_distance, -track_width/2],
+        # Rear right wheel
+        [-vehicle_params.rear_axle_distance, track_width/2]
+    ]
     
-    # Transformation for the front tire (includes steering angle)
-    front_angle = yaw + steering_angle
-    cos_front = np.cos(front_angle)
-    sin_front = np.sin(front_angle)
-    
-    # Transform front tire points to global frame
-    transformed_front_tire_points = np.zeros_like(front_tire_points)
-    for i, point in enumerate(front_tire_points):
-        # Rotate
-        rotated_x = point[0] * cos_front - point[1] * sin_front
-        rotated_y = point[0] * sin_front + point[1] * cos_front
-        # Translate
-        transformed_front_tire_points[i] = [front_axle_x + rotated_x, front_axle_y + rotated_y]
-    
-    # Transformation for the rear tire
-    cos_rear = cos_yaw
-    sin_rear = sin_yaw
-    
-    # Transform rear tire points to global frame
-    transformed_rear_tire_points = np.zeros_like(rear_tire_points)
-    for i, point in enumerate(rear_tire_points):
-        # Rotate
-        rotated_x = point[0] * cos_rear - point[1] * sin_rear
-        rotated_y = point[0] * sin_rear + point[1] * cos_rear
-        # Translate
-        transformed_rear_tire_points[i] = [rear_axle_x + rotated_x, rear_axle_y + rotated_y]
-    
-    # Draw the vehicle parts
+    # Draw the vehicle body
     ax.plot(transformed_body_points[:, 0], transformed_body_points[:, 1], color=color, linewidth=1.5)
-    ax.plot(transformed_front_tire_points[:, 0], transformed_front_tire_points[:, 1], color='black', linewidth=1.5)
-    ax.plot(transformed_rear_tire_points[:, 0], transformed_rear_tire_points[:, 1], color='black', linewidth=1.5)
+    
+    # Draw each wheel
+    for i, wheel_pos in enumerate(wheel_positions):
+        # Transform wheel position to global coordinates
+        wheel_global_x = x + wheel_pos[0] * cos_yaw - wheel_pos[1] * sin_yaw
+        wheel_global_y = y + wheel_pos[0] * sin_yaw + wheel_pos[1] * cos_yaw
+        
+        # Apply steering angle for front wheels (index 0 and 1)
+        if i < 2:  # Front wheels
+            wheel_angle = yaw + steering_angle
+        else:  # Rear wheels
+            wheel_angle = yaw
+            
+        cos_wheel = np.cos(wheel_angle)
+        sin_wheel = np.sin(wheel_angle)
+        
+        # Transform wheel points to global frame
+        transformed_wheel_points = np.zeros_like(wheel_points)
+        for j, point in enumerate(wheel_points):
+            # Rotate by the wheel angle
+            rotated_x = point[0] * cos_wheel - point[1] * sin_wheel
+            rotated_y = point[0] * sin_wheel + point[1] * cos_wheel
+            # Translate to wheel position
+            transformed_wheel_points[j] = [wheel_global_x + rotated_x, wheel_global_y + rotated_y]
+        
+        # Draw the wheel
+        ax.plot(transformed_wheel_points[:, 0], transformed_wheel_points[:, 1], color='black', linewidth=1.5)
 
 # Plot the trajectories - use subset to avoid overcrowding
 fig, ax = plt.subplots(figsize=(12, 10))
