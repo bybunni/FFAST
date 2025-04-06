@@ -8,6 +8,8 @@ import os
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import numpy as np
 from jax import jit, vmap
 from jax.lax import scan
 
@@ -88,8 +90,98 @@ all_trajectories = batch_simulator(base_state, steering_angles)
 # Create directory for saving the plot if it doesn't exist
 os.makedirs('examples', exist_ok=True)
 
+# Function to draw the vehicle as three rectangles
+def draw_vehicle(ax, x, y, yaw, steering_angle, vehicle_params, color='blue'):
+    """Draw the vehicle as three rectangles: main body, front tire, and rear tire.
+    
+    Args:
+        ax: Matplotlib axis to draw on
+        x, y: Position of the vehicle center in global coordinates
+        yaw: Yaw angle of the vehicle
+        steering_angle: Steering angle of the front tire
+        vehicle_params: Vehicle parameters including dimensions
+        color: Color of the vehicle outline
+    """
+    # Vehicle dimensions
+    body_length = vehicle_params.front_axle_distance + vehicle_params.rear_axle_distance + 0.5  # Add buffer
+    body_width = 1.8  # Typical car width
+    tire_length = 0.7  # Tire length
+    tire_width = 0.3   # Tire width
+    
+    # Calculate coordinates for the vehicle body rectangle in local frame
+    body_points = np.array([
+        [-vehicle_params.rear_axle_distance, -body_width/2],  # rear left
+        [-vehicle_params.rear_axle_distance, body_width/2],   # rear right
+        [vehicle_params.front_axle_distance, body_width/2],   # front right
+        [vehicle_params.front_axle_distance, -body_width/2],  # front left
+        [-vehicle_params.rear_axle_distance, -body_width/2]   # back to first point to close the shape
+    ])
+    
+    # Calculate coordinates for the front tire in local frame
+    front_tire_points = np.array([
+        [-tire_length/2, -tire_width/2],
+        [-tire_length/2, tire_width/2],
+        [tire_length/2, tire_width/2],
+        [tire_length/2, -tire_width/2],
+        [-tire_length/2, -tire_width/2]
+    ])
+    
+    # Calculate coordinates for the rear tire in local frame (same dimensions as front)
+    rear_tire_points = front_tire_points.copy()
+    
+    # Transformation matrix for the vehicle body
+    cos_yaw = np.cos(yaw)
+    sin_yaw = np.sin(yaw)
+    
+    # Transform body points to global frame
+    transformed_body_points = np.zeros_like(body_points)
+    for i, point in enumerate(body_points):
+        # Rotate
+        rotated_x = point[0] * cos_yaw - point[1] * sin_yaw
+        rotated_y = point[0] * sin_yaw + point[1] * cos_yaw
+        # Translate
+        transformed_body_points[i] = [x + rotated_x, y + rotated_y]
+    
+    # Position of front and rear axles in global coordinates
+    front_axle_x = x + vehicle_params.front_axle_distance * cos_yaw
+    front_axle_y = y + vehicle_params.front_axle_distance * sin_yaw
+    rear_axle_x = x - vehicle_params.rear_axle_distance * cos_yaw
+    rear_axle_y = y - vehicle_params.rear_axle_distance * sin_yaw
+    
+    # Transformation for the front tire (includes steering angle)
+    front_angle = yaw + steering_angle
+    cos_front = np.cos(front_angle)
+    sin_front = np.sin(front_angle)
+    
+    # Transform front tire points to global frame
+    transformed_front_tire_points = np.zeros_like(front_tire_points)
+    for i, point in enumerate(front_tire_points):
+        # Rotate
+        rotated_x = point[0] * cos_front - point[1] * sin_front
+        rotated_y = point[0] * sin_front + point[1] * cos_front
+        # Translate
+        transformed_front_tire_points[i] = [front_axle_x + rotated_x, front_axle_y + rotated_y]
+    
+    # Transformation for the rear tire
+    cos_rear = cos_yaw
+    sin_rear = sin_yaw
+    
+    # Transform rear tire points to global frame
+    transformed_rear_tire_points = np.zeros_like(rear_tire_points)
+    for i, point in enumerate(rear_tire_points):
+        # Rotate
+        rotated_x = point[0] * cos_rear - point[1] * sin_rear
+        rotated_y = point[0] * sin_rear + point[1] * cos_rear
+        # Translate
+        transformed_rear_tire_points[i] = [rear_axle_x + rotated_x, rear_axle_y + rotated_y]
+    
+    # Draw the vehicle parts
+    ax.plot(transformed_body_points[:, 0], transformed_body_points[:, 1], color=color, linewidth=1.5)
+    ax.plot(transformed_front_tire_points[:, 0], transformed_front_tire_points[:, 1], color='black', linewidth=1.5)
+    ax.plot(transformed_rear_tire_points[:, 0], transformed_rear_tire_points[:, 1], color='black', linewidth=1.5)
+
 # Plot the trajectories - use subset to avoid overcrowding
-plt.figure(figsize=(12, 10))
+fig, ax = plt.subplots(figsize=(12, 10))
 
 # Plot every Nth trajectory to avoid overcrowding
 plot_step = 5  # Adjust this value to show more or fewer trajectories
@@ -98,25 +190,37 @@ for i in range(0, num_trajectories, plot_step):
     trajectory = all_trajectories[i]
     x_coords = trajectory[:, 0]
     y_coords = trajectory[:, 1]
+    yaw = trajectory[:, 2]
     
     # Plot with color gradient based on steering angle
     # Use alpha for better visibility when trajectories overlap
-    plt.plot(x_coords, y_coords, 
-             label=f'Steering: {steering_angles[i]:.2f} rad',
-             alpha=0.7)
+    ax.plot(x_coords, y_coords, 
+           label=f'Steering: {steering_angles[i]:.2f} rad',
+           alpha=0.7)
+    
+    # Draw the vehicle at specific points along the trajectory
+    draw_step = num_steps // 4  # Draw vehicle at fewer points to avoid clutter
+    for j in range(0, num_steps, draw_step):
+        draw_vehicle(ax, 
+                    x_coords[j], 
+                    y_coords[j], 
+                    yaw[j], 
+                    steering_angles[i], 
+                    default_vehicle_params, 
+                    color='blue')
 
 # Add plot styling
-plt.title('Vehicle Trajectories with Varying Steering Angles', fontsize=16)
-plt.xlabel('X Position (m)', fontsize=14)
-plt.ylabel('Y Position (m)', fontsize=14)
-plt.grid(True)
-plt.axis('equal')
+ax.set_title('Vehicle Trajectories with Varying Steering Angles', fontsize=16)
+ax.set_xlabel('X Position (m)', fontsize=14)
+ax.set_ylabel('Y Position (m)', fontsize=14)
+ax.grid(True)
+ax.set_aspect('equal')
 
 # Place legend outside of the plot area to avoid covering the trajectories
-plt.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize='small')
+ax.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize='small')
 
 # Save the plot with high resolution
-plt.savefig("slipjax/examples/steering_trajectory_plot.png", bbox_inches='tight', dpi=300)
-plt.close()
+fig.savefig("examples/steering_trajectory_plot.png", bbox_inches='tight', dpi=300)
+plt.close(fig)
 
-print("Simulation complete. Plot saved to slipjax/examples/steering_trajectory_plot.png")
+print("Simulation complete. Plot saved to examples/steering_trajectory_plot.png")
