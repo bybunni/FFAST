@@ -81,20 +81,17 @@ def calculate_vehicle_dynamics(
     state: jax.Array,
     control_input: jax.Array,
     vehicle_params: VehicleParameters,
-    obstacle_velocity: Optional[jax.Array] = None,
 ) -> jax.Array:
     """Calculate the derivatives of the vehicle state.
     
     This is a JAX implementation of the MATLAB dynamics.m function.
     
     Args:
-        state: Vehicle state vector [x, y, yaw, vx, vy, yaw_rate] or
-               [x, y, yaw, vx, vy, yaw_rate, obs_x, obs_y]
+        state: Vehicle state vector [x, y, yaw, vx, vy, yaw_rate]
                - x, y: Position in global coordinates (m)
                - yaw: Yaw angle (rad)
                - vx, vy: Longitudinal and lateral velocities in body frame (m/s)
                - yaw_rate: Yaw rate (rad/s)
-               - obs_x, obs_y: Optional obstacle states
                
         control_input: Control input vector [wheel_speed, steering_angle]
                - wheel_speed: Wheel speed command (m/s)
@@ -115,22 +112,6 @@ def calculate_vehicle_dynamics(
     longitudinal_velocity = state[3]
     lateral_velocity = state[4]
     yaw_rate = state[5]
-    
-    # Handle obstacle state if present
-    state_size = state.shape[0]
-    has_obstacle_state = state_size == 8
-    
-    def get_obstacle_velocity():
-        if obstacle_velocity is not None:
-            return obstacle_velocity
-        # Default obstacle velocity if not provided
-        return jnp.array([0.0, 1.0])
-    
-    obstacle_vx, obstacle_vy = lax.cond(
-        has_obstacle_state,
-        get_obstacle_velocity,
-        lambda: jnp.array([0.0, 0.0]),
-    )
     
     # Extract control inputs
     wheel_speed_command = control_input[0]
@@ -238,30 +219,8 @@ def calculate_vehicle_dynamics(
         yaw_acceleration
     ])
     
-    # In JAX JIT, we need fixed output shapes for all branches
-    # Instead of using lax.cond with different shapes, we'll use two different functions
-    # and select the appropriate one based on the state length
-    output_length = len(state)
-    
-    # For state of length 8 (with obstacle)
-    def get_with_obstacle() -> jax.Array:
-        return jnp.concatenate([
-            basic_derivatives,
-            jnp.array([obstacle_vx, obstacle_vy])
-        ])
-    
-    # For state of length 6 (without obstacle)
-    def get_without_obstacle() -> jax.Array:
-        return basic_derivatives
-    
-    # This approach works because output_length is a Python int and not a JAX array
-    # so this is handled during compilation
-    if output_length == 8:
-        state_derivatives = get_with_obstacle()
-    else:
-        state_derivatives = get_without_obstacle()
-    
-    return state_derivatives
+    # Return the basic derivatives (6-dimensional state)
+    return basic_derivatives
 
 
 # Apply JIT compilation to the function with static parameter for vehicle_params
