@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from jax import vmap
 import pytest
 
-from slipjax.rear_tire_dynamics import calculate_rear_tire_forces
+from slipjax.models.tire.rear import calculate_rear_tire_forces, RearTireDynamics
 
 
 def test_rear_tire_dynamics_sanity() -> None:
@@ -17,11 +17,18 @@ def test_rear_tire_dynamics_sanity() -> None:
     longitudinal_stiffness = 5000.0  # Longitudinal stiffness (N/unit slip)
     cornering_stiffness = 1000.0  # Cornering stiffness (N/rad)
     
+    # Create model instance for class-based tests
+    model = RearTireDynamics(
+        cornering_stiffness=cornering_stiffness,
+        longitudinal_stiffness=longitudinal_stiffness
+    )
+    
     # Test case 1: Zero slip case (no longitudinal or lateral forces)
     v_x_zero_slip = 10.0  # Vehicle velocity
     wheel_vx_zero_slip = 10.0  # Wheel velocity matches vehicle (no slip)
     alpha_zero_slip = 0.0  # Zero slip angle
     
+    # Test legacy function
     fx_zero_slip, fy_zero_slip = calculate_rear_tire_forces(
         v_x_zero_slip,
         wheel_vx_zero_slip,
@@ -33,8 +40,28 @@ def test_rear_tire_dynamics_sanity() -> None:
         cornering_stiffness
     )
     
+    # Test class-based implementation with JIT-compiled method
+    fx_zero_slip_cls, fy_zero_slip_cls = model.jit_calculate_forces(
+        v_x_zero_slip,
+        wheel_vx_zero_slip,
+        alpha_zero_slip,
+        friction_coefficient,
+        sliding_friction_coefficient,
+        rear_load
+    )
+    
+    # Also test the simplified interface that only returns lateral force
+    slip_ratio_zero = 0.0
+    fy_zero_slip_simple = model.jit_call(alpha_zero_slip, slip_ratio_zero, rear_load, friction_coefficient)
+    
+    # Check legacy function results
     assert jnp.isclose(fx_zero_slip, 0.0), f"Expected Fx=0 with zero slip, got {fx_zero_slip}"
     assert jnp.isclose(fy_zero_slip, 0.0), f"Expected Fy=0 with zero slip, got {fy_zero_slip}"
+    
+    # Check class-based implementation results
+    assert jnp.isclose(fx_zero_slip_cls, 0.0), f"Expected Fx=0 with zero slip (class), got {fx_zero_slip_cls}"
+    assert jnp.isclose(fy_zero_slip_cls, 0.0), f"Expected Fy=0 with zero slip (class), got {fy_zero_slip_cls}"
+    assert jnp.isclose(fy_zero_slip_simple, 0.0), f"Expected Fy=0 with zero slip (simple interface), got {fy_zero_slip_simple}"
     
     # Test case 2: Pure longitudinal slip (acceleration, no lateral slip)
     v_x_long_slip = 10.0
@@ -176,14 +203,33 @@ def test_rear_tire_dynamics_batch_processing() -> None:
     longitudinal_stiffness = 5000.0
     cornering_stiffness = 1000.0
     
-    # Create a vectorized version of the function that operates on the slip angle
-    vectorized_tire_model = vmap(
+    # Create model instance
+    model = RearTireDynamics(
+        cornering_stiffness=cornering_stiffness,
+        longitudinal_stiffness=longitudinal_stiffness
+    )
+    
+    # Create a vectorized version of the legacy function that operates on the slip angle
+    vectorized_legacy_model = vmap(
         calculate_rear_tire_forces, 
         in_axes=(0, 0, 0, None, None, None, None, None)
     )
     
-    # Process all slip angles in a single operation
-    batch_fx, batch_fy = vectorized_tire_model(
+    # Create a vectorized version of the class-based function using JIT-compiled method
+    vectorized_class_model = vmap(
+        model.jit_calculate_forces,
+        in_axes=(0, 0, 0, None, None, None)
+    )
+    
+    # Also test the simplified interface
+    slip_ratios = (wheel_velocity - longitudinal_velocity) / longitudinal_velocity 
+    vectorized_simple_model = vmap(
+        model.jit_call,
+        in_axes=(0, 0, None, None)
+    )
+    
+    # Process all slip angles using legacy function
+    batch_fx, batch_fy = vectorized_legacy_model(
         longitudinal_velocity,
         wheel_velocity,
         slip_angles,
@@ -194,9 +240,34 @@ def test_rear_tire_dynamics_batch_processing() -> None:
         cornering_stiffness
     )
     
-    # Verify batch shape matches input shape
+    # Process using class-based implementation
+    batch_fx_cls, batch_fy_cls = vectorized_class_model(
+        longitudinal_velocity,
+        wheel_velocity,
+        slip_angles,
+        friction_coefficient,
+        sliding_friction_coefficient,
+        rear_load
+    )
+    
+    # Process using simplified interface
+    batch_fy_simple = vectorized_simple_model(
+        slip_angles,
+        slip_ratios,
+        rear_load,
+        friction_coefficient
+    )
+    
+    # Verify batch shape matches input shape for all implementations
     assert batch_fx.shape == slip_angles.shape, f"Expected Fx shape {slip_angles.shape}, got {batch_fx.shape}"
     assert batch_fy.shape == slip_angles.shape, f"Expected Fy shape {slip_angles.shape}, got {batch_fy.shape}"
+    assert batch_fx_cls.shape == slip_angles.shape, f"Expected Fx shape (class) {slip_angles.shape}, got {batch_fx_cls.shape}"
+    assert batch_fy_cls.shape == slip_angles.shape, f"Expected Fy shape (class) {slip_angles.shape}, got {batch_fy_cls.shape}"
+    assert batch_fy_simple.shape == slip_angles.shape, f"Expected Fy shape (simple) {slip_angles.shape}, got {batch_fy_simple.shape}"
+    
+    # Verify that class-based and legacy implementations give the same results
+    assert jnp.allclose(batch_fx, batch_fx_cls), "Fx values differ between legacy and class-based implementations"
+    assert jnp.allclose(batch_fy, batch_fy_cls), "Fy values differ between legacy and class-based implementations"
     
     # Verify that lateral forces have the expected antisymmetric behavior
     # (for pure lateral slip with no longitudinal slip, Fy should be antisymmetric)

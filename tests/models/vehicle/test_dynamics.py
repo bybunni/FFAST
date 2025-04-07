@@ -4,7 +4,13 @@ import jax.numpy as jnp
 import pytest
 from jax import vmap
 
-from slipjax.dynamics import VehicleParameters, calculate_vehicle_dynamics, wrap_to_pi
+from slipjax.models.vehicle.dynamics import (
+    VehicleParameters, 
+    calculate_vehicle_dynamics, 
+    wrap_to_pi,
+    VehicleDynamics, 
+    vehicleDynamics
+)
 
 
 @pytest.fixture
@@ -54,17 +60,40 @@ def test_stationary_vehicle(default_vehicle_params: VehicleParameters) -> None:
     # No control input
     control_input = jnp.array([0.0, 0.0])  # wheel_speed, steering_angle
     
-    # Calculate dynamics
+    # Test both the legacy function and the class-based implementation
+    # Legacy function
     state_derivatives = calculate_vehicle_dynamics(
         state, 
         control_input, 
         default_vehicle_params
     )
     
+    # Class-based implementation with custom parameters
+    model = VehicleDynamics(vehicle_params=default_vehicle_params)
+    state_derivatives_cls = model.jit_call(state, control_input)
+    
+    # Default class instance
+    state_derivatives_default = vehicleDynamics.jit_call(state, control_input)
+    
     # Verify all derivatives are zero when stationary with no input
     for i, derivative in enumerate(state_derivatives):
         assert jnp.isclose(derivative, 0.0), \
             f"Expected zero derivative for state[{i}], got {derivative}"
+        
+    # Verify class-based implementation gives the same results
+    for i, derivative in enumerate(state_derivatives_cls):
+        assert jnp.isclose(derivative, 0.0), \
+            f"Expected zero derivative for state[{i}] (class), got {derivative}"
+            
+    # Also check the default model instance results
+    for i, derivative in enumerate(state_derivatives_default):
+        assert jnp.isclose(derivative, 0.0), \
+            f"Expected zero derivative for state[{i}] (default), got {derivative}"
+            
+    # Verify both implementations give the same results
+    assert jnp.allclose(state_derivatives, state_derivatives_cls), \
+        "Legacy function and class-based model gave different results"
+    # Default model may have different parameters, so results might differ
 
 
 def test_straight_acceleration(default_vehicle_params: VehicleParameters) -> None:
@@ -176,26 +205,51 @@ def test_batch_processing(default_vehicle_params: VehicleParameters) -> None:
     # Fixed control input for all states
     control_input = jnp.array([10.0, 0.1])  # Same wheel speed and steering for all
     
+    # Create model instance with custom parameters
+    model = VehicleDynamics(vehicle_params=default_vehicle_params)
+    
     # Vectorized dynamics calculation over the first argument (state)
-    vectorized_dynamics = vmap(
+    # Legacy function
+    vectorized_legacy_dynamics = vmap(
         calculate_vehicle_dynamics, 
         in_axes=(0, None, None)
     )
     
+    # Class-based implementation using JIT-compiled methods
+    vectorized_class_dynamics = vmap(
+        model.jit_call,
+        in_axes=(0, None)
+    )
+    
     # Calculate dynamics for all states at once
-    batch_derivatives = vectorized_dynamics(
+    # Legacy function
+    batch_derivatives = vectorized_legacy_dynamics(
         states, 
         control_input, 
         default_vehicle_params
     )
     
-    # Batch shape should match input shape
+    # Class-based implementation
+    batch_derivatives_cls = vectorized_class_dynamics(
+        states,
+        control_input
+    )
+    
+    # Batch shape should match input shape for both implementations
     assert batch_derivatives.shape[0] == batch_size, \
-        f"Expected {batch_size} results, got {batch_derivatives.shape[0]}"
+        f"Expected {batch_size} results (legacy), got {batch_derivatives.shape[0]}"
+    assert batch_derivatives_cls.shape[0] == batch_size, \
+        f"Expected {batch_size} results (class), got {batch_derivatives_cls.shape[0]}"
     
     # Each result should have 6 state derivatives
     assert batch_derivatives.shape[1] == 6, \
-        f"Expected 6 derivatives per state, got {batch_derivatives.shape[1]}"
+        f"Expected 6 derivatives per state (legacy), got {batch_derivatives.shape[1]}"
+    assert batch_derivatives_cls.shape[1] == 6, \
+        f"Expected 6 derivatives per state (class), got {batch_derivatives_cls.shape[1]}"
+        
+    # Verify both implementations give the same results
+    assert jnp.allclose(batch_derivatives, batch_derivatives_cls), \
+        "Legacy function and class-based model gave different batch results"
     
     # Verify monotonicity in certain outputs based on increasing velocity
     # e.g., higher speeds should generally result in higher yaw accelerations for a fixed steering angle

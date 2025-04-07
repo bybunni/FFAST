@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from jax import vmap
 import pytest
 
-from slipjax.front_tire_dynamics import calculate_front_tire_lateral_force
+from slipjax.models.tire.front import calculate_front_tire_lateral_force, FrontTireDynamics
 
 
 def test_front_tire_dynamics_sanity() -> None:
@@ -15,18 +15,30 @@ def test_front_tire_dynamics_sanity() -> None:
     load_f = 1000.0  # Front tire load (N)
     C_alpha = 1000.0  # Cornering stiffness (N/rad)
     
+    # Create model instance for testing class-based interface
+    model = FrontTireDynamics(cornering_stiffness=C_alpha)
+    
     # Test with zero slip angle
     alpha_zero = 0.0
+    # Test both the class-based interface and the legacy function
+    # Use the JIT-compiled versions for the class interface
+    Fy_zero_cls = model.jit_call(alpha_zero, jnp.zeros_like(alpha_zero), load_f, mu)
     Fy_zero = calculate_front_tire_lateral_force(alpha_zero, mu, load_f, C_alpha)
+    
     assert jnp.isclose(Fy_zero, 0.0), f"Expected Fy=0 with zero slip angle, got {Fy_zero}"
+    assert jnp.isclose(Fy_zero_cls, 0.0), f"Expected Fy=0 with zero slip angle (class), got {Fy_zero_cls}"
     
     # Test with small slip angle (in linear region)
     alpha_small = 0.05  # ~2.86 degrees
     Fy_small = calculate_front_tire_lateral_force(alpha_small, mu, load_f, C_alpha)
+    Fy_small_cls = model.jit_call(alpha_small, jnp.zeros_like(alpha_small), load_f, mu)
+    
     # In linear region, Fy ≈ -C_alpha * tan(alpha)
     expected_Fy_small = -C_alpha * jnp.tan(alpha_small)
     assert jnp.isclose(Fy_small, expected_Fy_small, rtol=0.1), \
         f"Expected Fy≈{expected_Fy_small} with small slip angle, got {Fy_small}"
+    assert jnp.isclose(Fy_small_cls, expected_Fy_small, rtol=0.1), \
+        f"Expected Fy≈{expected_Fy_small} with small slip angle (class), got {Fy_small_cls}"
     
     # Test with large slip angle (in saturation region)
     alpha_sl = jnp.arctan(3 * mu * load_f / C_alpha)
@@ -57,19 +69,40 @@ def test_front_tire_dynamics_batch_processing() -> None:
     front_load = 1000.0
     cornering_stiffness = 1000.0
     
-    # Create a vectorized version of the function that operates on the first argument (slip angle)
-    vectorized_tire_model = vmap(calculate_front_tire_lateral_force, in_axes=(0, None, None, None))
+    # Test both class-based and legacy function approaches
+    # Create an instance of the model
+    model = FrontTireDynamics(cornering_stiffness=cornering_stiffness)
     
-    # Process all slip angles in a single operation
-    batch_forces = vectorized_tire_model(
+    # Create a vectorized version of both the class and function that operates on the first argument (slip angle)
+    vectorized_legacy_model = vmap(calculate_front_tire_lateral_force, in_axes=(0, None, None, None))
+    
+    # For the class-based interface, we need to provide slip_ratio as well
+    # Use the JIT-compatible method for vectorization
+    vectorized_class_model = vmap(model.jit_call, in_axes=(0, 0, None, None))
+    
+    # Process all slip angles in a single operation - legacy function approach
+    batch_forces = vectorized_legacy_model(
         slip_angles, 
         friction_coefficient, 
         front_load, 
         cornering_stiffness
     )
     
-    # Verify batch shape matches input shape
+    # Process using class-based approach
+    slip_ratios = jnp.zeros_like(slip_angles)  # Slip ratio is not used in this model
+    batch_forces_cls = vectorized_class_model(
+        slip_angles,
+        slip_ratios,
+        front_load,
+        friction_coefficient
+    )
+    
+    # Verify batch shape matches input shape for both approaches
     assert batch_forces.shape == slip_angles.shape, f"Expected shape {slip_angles.shape}, got {batch_forces.shape}"
+    assert batch_forces_cls.shape == slip_angles.shape, f"Expected shape {slip_angles.shape}, got {batch_forces_cls.shape}"
+    
+    # Verify both approaches give the same results
+    assert jnp.allclose(batch_forces, batch_forces_cls), "Legacy and class-based models produced different results"
     
     # Verify that forces at positive and negative angles have the expected symmetry
     midpoint = batch_size // 2
