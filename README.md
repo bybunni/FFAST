@@ -12,14 +12,34 @@ SlipJAX is a Python package that translates MATLAB vehicle dynamics models to JA
 
 - **JAX Compatibility**: All computations are JAX-compatible, allowing for GPU acceleration and automatic differentiation
 - **JIT Compilation**: Model functions are decorated with `@jit` for faster execution
-- **Pure Functional Design**: Models implemented using pure functions for better composability
+- **Modular Architecture**: Well-structured package organization for better maintainability and extensibility
+- **Object-Oriented Design**: Class-based API for a more modern and flexible interface
+- **Legacy Compatibility**: Maintained backward compatibility with pure functional API
 - **Type Annotations**: Comprehensive type hints using JAX-specific types
 - **Batch Processing**: Models support batch processing of multiple vehicle states simultaneously
+
+## Project Structure
+
+```
+slipjax/
+├── models/
+│   ├── tire/
+│   │   ├── base.py     # Base tire dynamics class
+│   │   ├── front.py    # Front tire dynamics model
+│   │   └── rear.py     # Rear tire dynamics model
+│   └── vehicle/
+│       └── dynamics.py # Vehicle dynamics model
+├── config/
+│   └── parameters.py   # Vehicle parameters
+└── utils/
+    └── jax_utils.py    # JAX-specific utilities
+```
 
 ## Models Implemented
 
 - **Front Tire Dynamics**: Calculates lateral force for the front tire based on slip angle
 - **Rear Tire Dynamics**: Calculates longitudinal and lateral forces for the rear tire based on multiple parameters
+- **Vehicle Dynamics**: Full vehicle model that integrates tire forces to simulate vehicle motion
 
 ## Installation
 
@@ -37,10 +57,83 @@ pip install -e ".[dev]"
 
 ## Quick Start
 
+### Class-Based API (Recommended)
+
 ```python
 import jax.numpy as jnp
-from slipjax.front_tire_dynamics import calculate_front_tire_lateral_force
-from slipjax.rear_tire_dynamics import calculate_rear_tire_forces
+from slipjax.models.tire.front import FrontTireDynamics
+from slipjax.models.tire.rear import RearTireDynamics
+from slipjax.models.vehicle.dynamics import VehicleDynamics
+from slipjax.config.parameters import VehicleParameters
+
+# Front tire example
+front_tire = FrontTireDynamics(cornering_stiffness=jnp.array(50000.0))
+
+slip_angle = jnp.array(0.1)  # radians
+longitudinal_slip = jnp.array(0.0)  # no longitudinal slip for front tire
+front_load = jnp.array(3000.0)  # Newtons
+friction_coefficient = jnp.array(0.7)
+
+lateral_force = front_tire(slip_angle, longitudinal_slip, front_load, friction_coefficient)
+
+# Rear tire example
+rear_tire = RearTireDynamics(
+    cornering_stiffness=jnp.array(45000.0),
+    longitudinal_stiffness=jnp.array(40000.0)
+)
+
+longitudinal_velocity = jnp.array(10.0)  # m/s
+wheel_velocity = jnp.array(11.0)  # m/s
+slip_angle = jnp.array(0.05)  # radians
+friction_coefficient = jnp.array(0.7)
+sliding_friction_coefficient = jnp.array(0.5)
+rear_load = jnp.array(3500.0)  # Newtons
+
+longitudinal_force, lateral_force = rear_tire.calculate_forces(
+    longitudinal_velocity,
+    wheel_velocity,
+    slip_angle,
+    friction_coefficient,
+    sliding_friction_coefficient,
+    rear_load
+)
+
+# Full vehicle dynamics example
+vehicle_params = VehicleParameters(
+    mass=jnp.array(1500.0),  # kg
+    moment_of_inertia=jnp.array(3000.0),  # kg*m^2
+    front_axle_distance=jnp.array(1.2),  # m
+    rear_axle_distance=jnp.array(1.4),  # m
+    cornering_stiffness=jnp.array(45000.0),  # N/rad
+    longitudinal_stiffness=jnp.array(40000.0),  # N/unit slip
+    friction_coefficient=jnp.array(0.7),
+    sliding_friction_coefficient=jnp.array(0.5),
+    front_tire_load=jnp.array(3000.0),  # N
+    rear_tire_load=jnp.array(3500.0),  # N
+    velocity_damping=jnp.array(0.1),
+    yaw_damping=jnp.array(0.1)
+)
+
+vehicle = VehicleDynamics(vehicle_params=vehicle_params)
+
+# State: [x, y, yaw, vx, vy, yaw_rate]
+state = jnp.array([0.0, 0.0, 0.0, 10.0, 0.0, 0.0])
+
+# Control input: [wheel_speed, steering_angle]
+control_input = jnp.array([11.0, 0.1])
+
+# Calculate state derivatives
+state_derivatives = vehicle.calculate_derivatives(state, control_input)
+```
+
+### Legacy API (For backward compatibility)
+
+```python
+import jax.numpy as jnp
+from slipjax.models.tire.front import calculate_front_tire_lateral_force
+from slipjax.models.tire.rear import calculate_rear_tire_forces
+from slipjax.models.vehicle.dynamics import calculate_vehicle_dynamics
+from slipjax.config.parameters import VehicleParameters
 
 # Front tire example
 slip_angle = jnp.array(0.1)  # radians
@@ -76,6 +169,7 @@ longitudinal_force, lateral_force = calculate_rear_tire_forces(
     cornering_stiffness
 )
 ```
+```
 
 ## Model Details
 
@@ -86,6 +180,14 @@ The vehicle dynamics models are based on the mathematical formulations presented
 - **Friction Models**: Including linear and saturation regions
 - **Tire Stiffness Properties**: Cornering and longitudinal stiffness parameters
 
+### JAX Compatibility
+
+All models are designed to work with JAX's Just-In-Time (JIT) compilation for maximum performance. Special care has been taken to handle JAX tracing and compilation requirements:
+
+- Using custom conditional utilities to replace Python's if/else statements
+- Handling special cases like division by zero in a JIT-compatible way
+- Ensuring all operations are compatible with JAX's autodiff
+
 For detailed model documentation, see the [dynamics documentation](docs/dynamics.md).
 
 ## Development
@@ -95,6 +197,8 @@ For detailed model documentation, see the [dynamics documentation](docs/dynamics
 ```bash
 pytest
 ```
+
+Tests are organized to mirror the package structure and include comprehensive tests for each component.
 
 ### Code Formatting
 
@@ -108,6 +212,16 @@ isort slipjax tests
 ```bash
 mypy slipjax
 ```
+
+### Adding New Models
+
+To add a new tire or vehicle dynamics model:
+
+1. Create a new file in the appropriate directory (`models/tire/` or `models/vehicle/`)
+2. Implement the model as a class inheriting from the appropriate base class
+3. Add JIT-compatible methods for the core functionality
+4. Include legacy functions for backward compatibility if needed
+5. Write comprehensive tests in the corresponding test directory
 
 ## License
 
